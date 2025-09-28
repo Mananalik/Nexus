@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, DragEvent } from "react";
+import { useState, DragEvent, useRef } from "react";
 import { CheckCircle, UploadCloud, File, X } from "lucide-react";
 
 // Main Page Component
@@ -8,7 +8,7 @@ export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const handleFileChange = (files: FileList | null) => {
     setError(null);
     if (files && files.length > 0) {
@@ -49,6 +49,9 @@ export default function UploadPage() {
   const removeFile = () => {
     setSelectedFile(null);
     setError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const steps = [
@@ -136,6 +139,7 @@ export default function UploadPage() {
               <input
                 type="file"
                 id="file-input"
+                ref={fileInputRef}
                 className="hidden"
                 accept=".html"
                 onChange={(e) => handleFileChange(e.target.files)}
