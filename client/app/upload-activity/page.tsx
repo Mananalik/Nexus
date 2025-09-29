@@ -2,13 +2,17 @@
 
 import { useState, DragEvent, useRef } from "react";
 import { CheckCircle, UploadCloud, File, X } from "lucide-react";
-
+import axios from "axios";
 // Main Page Component
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiResponse,setApiResponse] = useState<string | null>(null);
+
   const handleFileChange = (files: FileList | null) => {
     setError(null);
     if (files && files.length > 0) {
@@ -53,7 +57,37 @@ export default function UploadPage() {
       fileInputRef.current.value = "";
     }
   };
+  const handleProcessFile = async()=>{
+    if(!selectedFile){
+      setError("No file selected.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setApiResponse(null);
 
+    const formData = new FormData();
+    formData.append("file",selectedFile);
+    try{
+      const response = await axios.post(
+        "http://127.0.0.1:8000/api/process-transactions",
+        formData,
+        {
+          headers:{
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+      setApiResponse(JSON.stringify(response.data,null,2));
+    } catch (err: any){
+      setError(
+        "Upload failed. Is the backend server running? Check console for details."
+      );
+      console.error(err);
+    }finally{
+      setIsLoading(false);
+    }
+  };
   const steps = [
     {
       text: "Go to",
@@ -184,11 +218,20 @@ export default function UploadPage() {
             {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
             <button
+              onClick={handleProcessFile}
               disabled={!selectedFile}
               className="w-full mt-6 bg-[#00ADB5] text-white font-bold py-3 px-4 rounded-lg hover:bg-[#008a90] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 disabled:transform-none"
             >
-              Process File
+              {isLoading ? "Processing..." : "Process File"} 
             </button>
+            {apiResponse && (
+                  <div className="w-full mt-6 text-left">
+                    <h3 className="text-lg font-semibold text-white">Backend Response:</h3>
+                    <pre className="mt-2 p-4 bg-[#222831] rounded-md text-sm text-gray-300 overflow-x-auto">
+                      <code>{apiResponse}</code>
+                    </pre>
+                  </div>
+                )}
           </div>
         </div>
       </main>
