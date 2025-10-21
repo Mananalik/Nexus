@@ -1,30 +1,46 @@
 "use client";
 
-import { createContext, useState, useContext, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode } from 'react';
 
-interface Transaction {
+type Transaction = {
   type: string;
   amount: number;
-  receiver?: string | null;
-  account?: string | null;
+  receiver: string;
   date: string;
-  time: string;
-}
+  category: string;
+  date_original?: string;
+};
 
-interface TransactionContextType {
+type ParseStats = {
+  total_attempts: number;
+  successful: number;
+  failed: number;
+  success_rate: number;
+  failed_dates: Array<[string, string]>;
+};
+
+type TransactionContextType = {
   transactions: Transaction[];
   setTransactions: (transactions: Transaction[]) => void;
-}
+  parseStats: ParseStats | null;
+  setParseStats: (stats: ParseStats | null) => void;
+};
 
-const TransactionContext = createContext<TransactionContextType | undefined>(
-  undefined
-);
+const TransactionContext = createContext<TransactionContextType | undefined>(undefined);
 
 export function TransactionProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [parseStats, setParseStats] = useState<ParseStats | null>(null);
 
   return (
-    <TransactionContext.Provider value={{ transactions, setTransactions }}>
+    <TransactionContext.Provider 
+      value={{ 
+        transactions, 
+        setTransactions, 
+        parseStats, 
+        setParseStats 
+      }}
+    >
       {children}
     </TransactionContext.Provider>
   );
@@ -33,9 +49,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 export function useTransactions() {
   const context = useContext(TransactionContext);
   if (context === undefined) {
-    throw new Error(
-      "useTransactions must be used within a TransactionProvider"
-    );
+    throw new Error('useTransactions must be used within a TransactionProvider');
   }
   return context;
 }

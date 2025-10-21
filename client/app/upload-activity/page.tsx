@@ -5,25 +5,21 @@ import { CheckCircle, UploadCloud, File, X } from "lucide-react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useTransactions } from "../../context/TransactionContext";
-
-// Main Page Component
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [isLoading, setIsLoading] = useState(false);
-  const [apiResponse, setApiResponse] = useState<string | null>(null);
 
-  const { setTransactions } = useTransactions();
+  const { setTransactions, setParseStats } = useTransactions();
   const router = useRouter();
 
   const handleFileChange = (files: FileList | null) => {
     setError(null);
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type === "text/html") {
+      if (file.type === "text/html" || file.name.endsWith('.html')) {
         setSelectedFile(file);
       } else {
         setError("Invalid file type. Please upload an HTML file.");
@@ -63,6 +59,7 @@ export default function UploadPage() {
       fileInputRef.current.value = "";
     }
   };
+
   const handleProcessFile = async () => {
     if (!selectedFile) {
       setError("No file selected.");
@@ -73,6 +70,7 @@ export default function UploadPage() {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
+    
     try {
       const response = await axios.post(
         "http://127.0.0.1:8000/api/process-transactions",
@@ -81,12 +79,27 @@ export default function UploadPage() {
           headers: {
             "Content-Type": "multipart/form-data",
           },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
         }
       );
-      // 1. Set the data in the global context
-      setTransactions(response.data);
-      // 2. Navigate to the new transactions page
-      router.push("/transactions");
+      
+      console.log('✓ API Response:', response.data);
+      console.log(`✓ Received ${response.data.transaction_count} transactions`);
+      
+      if (response.data.transactions && Array.isArray(response.data.transactions)) {
+        setTransactions(response.data.transactions);
+        
+        if (response.data.parsing_statistics) {
+          setParseStats(response.data.parsing_statistics);
+        }
+        
+        router.push("/transactions");
+      } else {
+        setError("Invalid response format from server");
+        console.error('Invalid response:', response.data);
+      }
+      
     } catch (err: unknown) {
       type AxiosErrorType = {
         response?: {
@@ -103,7 +116,7 @@ export default function UploadPage() {
           errorObj.response?.data?.detail) ||
         "Upload failed. Is the backend server running?";
       setError(errorMessage);
-      console.error(err);
+      console.error('Upload error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -236,14 +249,28 @@ export default function UploadPage() {
               )}
             </div>
 
-            {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+            {error && (
+              <div className="w-full mt-4 p-4 bg-red-500/20 border border-red-500 rounded-lg">
+                <p className="text-sm text-red-300">{error}</p>
+              </div>
+            )}
 
             <button
               onClick={handleProcessFile}
-              disabled={!selectedFile}
+              disabled={!selectedFile || isLoading}
               className="w-full mt-6 bg-[#00ADB5] text-white font-bold py-3 px-4 rounded-lg hover:bg-[#008a90] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 disabled:transform-none"
             >
-              {isLoading ? "Processing..." : "Process File"}
+              {isLoading ? (
+                <span className="flex items-center justify-center">
+                  <svg className="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Processing...
+                </span>
+              ) : (
+                "Process File"
+              )}
             </button>
           </div>
         </div>
