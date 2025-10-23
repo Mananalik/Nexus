@@ -42,6 +42,7 @@ FALLBACK_MODELS = [
     "google/flan-t5-base",       # Works, smaller but effective
     "facebook/bart-large-mnli",  # Works for classification
     "distilbert-base-uncased",   # Works, very fast
+    "gpt2",
 ]
 
 # Get token from CLI login (huggingface-cli login)
@@ -268,6 +269,7 @@ class RobustDateParser:
 def normalize_entry_text(text: str) -> str:
     t = " ".join(text.split())
     t = re.sub(r"\bSept\b", "Sep", t, flags=re.IGNORECASE)
+    t = t.strip().strip(',')
     return t
 
 
@@ -281,16 +283,17 @@ def parse_gpay_html(html_content: str):
     date_parser = RobustDateParser()
 
     date_line_re = re.compile(
-        r"^\s*((?:0?[1-9]|[12][0-9]|3[01])\s+[A-Za-z]{3,9}\s+\d{4}(?:,\s+\d{2}:\d{2}:\d{2})?)\s*(?:GMT[+-]\d{2}:\d{2})?\s*$",
+        r"((?:0?[1-9]|[12][0-9]|3[01])\s+[A-Za-z]{3,9}\s+\d{4}(?:,\s+\d{2}:\d{2}:\d{2})?)" 
+        r"\s*(?:GMT[+-]\d{2}:\d{2})?", 
         flags=re.IGNORECASE,
     )
     
     left_re = re.compile(
-        r"^(Paid|Sent|Received)\s*₹([\d,.]+)"
-        r"(?:\s*(?:to|from)\s*(.*?))?"
-        r"(?:\s*using\s+Bank\s+Account.*)?$",
-        flags=re.IGNORECASE,
-    )
+    r"^(Paid|Sent|Received)\s*₹([\d,.]+)"    # Group 1: Action, Group 2: Amount
+    r"(?:\s*(?:to|from)\s*(.*?))?"           # Group 3: The receiver (OPTIONAL)
+    r"(?:\s*using\s+Bank\s+Account.*)?$",    # Matches "using Bank Account..." (OPTIONAL)
+    flags=re.IGNORECASE,
+)
 
     transactions = []
     one_year_ago = datetime.now() - timedelta(days=365)
@@ -299,22 +302,23 @@ def parse_gpay_html(html_content: str):
 
     for idx, block in enumerate(blocks):
         raw = block.get_text("\n")
+        full_text = normalize_entry_text(raw)
         lines = [normalize_entry_text(l) for l in raw.splitlines() if l.strip()]
 
         left_line = next((l for l in lines if re.match(r"^(?:Paid|Sent|Received)\b", l, flags=re.IGNORECASE)), None)
-        date_line = next((l for l in lines if date_line_re.match(l)), None)
+        date_match = date_line_re.search(full_text)
         
         if not left_line:
             logger.debug(f"Block {idx}: No action line found")
             continue
             
-        if not date_line:
-            logger.debug(f"Block {idx}: No date line found")
+        if not date_match:
+            logger.debug(f"Block {idx}: No date pattern found in text: {full_text}")
             skipped_no_date += 1
             continue
 
         m = left_re.match(left_line)
-        d = date_line_re.match(date_line)
+        d = date_match
         if not m or not d:
             logger.debug(f"Block {idx}: Regex match failed")
             continue
@@ -384,7 +388,7 @@ async def _call_hf_inference(model_id: str, prompt: str) -> str | None:
     if not HF_TOKEN:
         return None
 
-    url = f"https://api-inference.huggingface.co/models/{model_id}"
+    url = f"https://router.huggingface.co/hf-inference/{model_id}"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
     # Simplified prompt for smaller models
@@ -431,7 +435,11 @@ async def get_category_from_llm(merchant_name: str) -> str:
         return category_cache[merchant_name]
 
     # Simplified prompt that works better with smaller models
-    prompt = f"Categorize this merchant: {merchant_name}\nCategory:"
+    prompt = (
+        f"Classify the merchant '{merchant_name}' into one of the "
+        f"following categories: {CATEGORIES_LIST_STR}\n"
+        f"Category:"
+    )
 
     models_to_try = [HF_MODEL_ID] + [m for m in FALLBACK_MODELS if m != HF_MODEL_ID]
     generated_category = None
