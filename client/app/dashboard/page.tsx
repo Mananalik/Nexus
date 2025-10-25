@@ -29,6 +29,7 @@ import {
   BarChart3,
   ArrowLeft,
   AlertCircle,
+  Bot
 } from "lucide-react";
 
 // Color palette for charts
@@ -374,6 +375,7 @@ export default function DashboardPage() {
             </div>
           )}
 
+
           {/* Monthly Trend - Line Chart */}
           {monthlyTrend.length > 0 && (
             <div className="bg-[#393E46] p-6 rounded-xl shadow-lg">
@@ -526,6 +528,14 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+      <button
+        onClick={() => router.push("/advisor")}
+        className="fixed bottom-8 right-8 bg-[#00ADB5] text-white p-4 rounded-full shadow-lg hover:bg-[#008a90] transition-all hover:scale-110 flex items-center gap-2 z-50"
+        title="Ask AI Financial Advisor"
+      >
+        <Bot className="h-6 w-6" />
+        <span className="hidden md:inline font-bold">AI Advisor</span>
+      </button>
     </div>
   );
 }
