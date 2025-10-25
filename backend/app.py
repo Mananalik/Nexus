@@ -10,6 +10,10 @@ from huggingface_hub import get_token
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
+from huggingface_hub import InferenceClient
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_huggingface import HuggingFaceEndpoint
 
 
 # --- Logging Configuration ---
@@ -39,14 +43,45 @@ HF_MODEL_ID = os.getenv("HF_MODEL_ID", "google/flan-t5-base")
 
 # Fallback models - all confirmed working on free tier
 FALLBACK_MODELS = [
-    "google/flan-t5-base",       # Works, smaller but effective
-    "facebook/bart-large-mnli",  # Works for classification
-    "distilbert-base-uncased",   # Works, very fast
-    "gpt2",
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "google/flan-t5-large",
+    "mistralai/Mistral-7B-Instruct-v0.2",
 ]
 
 # Get token from CLI login (huggingface-cli login)
 HF_TOKEN = get_token()
+HF_ADVISOR_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+
+# Initialize LangChain LLM
+llm = None
+chat_history_store = {}  # Store chat histories per session
+
+if HF_TOKEN:
+    try:
+        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+        
+        # Initialize endpoint
+        endpoint = HuggingFaceEndpoint(
+            repo_id=HF_ADVISOR_MODEL,
+            huggingfacehub_api_token=HF_TOKEN,
+        )
+        
+        # Wrap in chat interface
+        llm = ChatHuggingFace(llm=endpoint)
+        
+        logger.info("✓ LangChain Chat LLM initialized")
+    except Exception as e:
+        logger.error(f"LangChain init failed: {e}")
+        llm = None
+
+
+# LangChain prompt template
+chat_template = ChatPromptTemplate([
+    ('system', 'You are an expert financial advisor. Provide specific, actionable advice using numbers from the data. Be concise and helpful.'),
+    MessagesPlaceholder(variable_name='chat_history'),
+    ('human', 'Financial Data:\n{financial_summary}\n\nQuestion: {query}')
+])
+
 
 if not HF_TOKEN:
     logger.warning(
@@ -579,6 +614,325 @@ async def root():
             "health": "/api/health",
             "process_transactions": "/api/process-transactions (POST)"
         }
+    }
+
+def generate_financial_summary(transactions):
+    """Generate concise financial summary for AI"""
+    total_spent = sum(t['amount'] for t in transactions if t['type'] in ['Paid', 'Sent'])
+    total_income = sum(t['amount'] for t in transactions if t['type'] == 'Received')
+    net_flow = total_income - total_spent
+    
+    # Monthly calculations
+    unique_months = len(set(t['date'][:7] for t in transactions))
+    months = max(1, unique_months)
+    monthly_spent = total_spent / months
+    monthly_income = total_income / months
+    monthly_savings = net_flow / months
+    savings_rate = (monthly_savings/monthly_income*100) if monthly_income > 0 else 0
+    
+    # Category breakdown
+    category_spending = {}
+    for t in transactions:
+        if t['type'] in ['Paid', 'Sent']:
+            cat = t.get('category', 'Miscellaneous')
+            category_spending[cat] = category_spending.get(cat, 0) + t['amount']
+    
+    top_categories = sorted(category_spending.items(), key=lambda x: x[1], reverse=True)[:5]
+    
+    summary = f"""Monthly Income: Rs.{monthly_income:,.0f}
+Monthly Spending: Rs.{monthly_spent:,.0f}
+Monthly Savings: Rs.{monthly_savings:,.0f}
+Savings Rate: {savings_rate:.1f}%
+Top Spending Categories:"""
+    
+    for i, (cat, amount) in enumerate(top_categories, 1):
+        pct = (amount / total_spent * 100) if total_spent > 0 else 0
+        summary += f"\n{i}. {cat}: Rs.{amount:,.0f} ({pct:.1f}%)"
+    
+    return summary
+
+
+def generate_rule_based_advice(question, transactions):
+    """Smart Financial Advisor with Better Intent Recognition"""
+    question_lower = question.lower()
+    
+    # Calculate all metrics
+    total_spent = sum(t['amount'] for t in transactions if t['type'] in ['Paid', 'Sent'])
+    total_income = sum(t['amount'] for t in transactions if t['type'] == 'Received')
+    net_flow = total_income - total_spent
+    
+    category_spending = {}
+    for t in transactions:
+        if t['type'] in ['Paid', 'Sent']:
+            cat = t.get('category', 'Miscellaneous')
+            category_spending[cat] = category_spending.get(cat, 0) + t['amount']
+    
+    sorted_categories = sorted(category_spending.items(), key=lambda x: x[1], reverse=True)
+    top_category = sorted_categories[0] if sorted_categories else ("Unknown", 0)
+    
+    unique_months = len(set(t['date'][:7] for t in transactions))
+    months = max(1, unique_months)
+    monthly_spent = total_spent / months
+    monthly_income = total_income / months
+    monthly_savings = net_flow / months
+    
+    # PRIORITY 1: Spending/Expense questions (most common)
+    spending_keywords = ["spend", "spending", "expense", "expenses", "expenditure", "cost", "costly", "reduce", "cut", "minimize", "less", "going"]
+    if any(word in question_lower for word in spending_keywords):
+        top_3 = sorted_categories[:3]
+        category_tip = get_category_tip(top_category[0])
+        
+        cat2_name = top_3[1][0] if len(top_3) > 1 else "N/A"
+        cat2_amt = top_3[1][1] if len(top_3) > 1 else 0
+        cat2_pct = (cat2_amt/total_spent*100) if len(top_3) > 1 and total_spent > 0 else 0
+        
+        cat3_name = top_3[2][0] if len(top_3) > 2 else "N/A"
+        cat3_amt = top_3[2][1] if len(top_3) > 2 else 0
+        cat3_pct = (cat3_amt/total_spent*100) if len(top_3) > 2 and total_spent > 0 else 0
+        
+        return f"""**Reduce Spending: Action Plan**
+
+**Current Monthly Spending:** Rs.{monthly_spent:,.0f}
+
+**Top 3 Expense Categories:**
+1. {top_3[0][0]}: Rs.{top_3[0][1]:,.0f} ({top_3[0][1]/total_spent*100:.1f}%) - START HERE
+2. {cat2_name}: Rs.{cat2_amt:,.0f} ({cat2_pct:.1f}%)
+3. {cat3_name}: Rs.{cat3_amt:,.0f} ({cat3_pct:.1f}%)
+
+**Priority: Reduce {top_category[0]} First**
+{category_tip}
+
+**Action Steps:**
+1. Cut {top_category[0]} by 20%: Save Rs.{top_category[1] * 0.2:,.0f}
+2. Review and cancel unused subscriptions
+3. Track daily expenses for 1 month
+4. Set weekly spending limits
+
+**Target:** Reduce total spending by 15% = Rs.{monthly_spent * 0.15:,.0f}/month savings"""
+    
+    # PRIORITY 2: Savings questions
+    elif any(word in question_lower for word in ["save", "saving", "savings"]):
+        savings_rate = (monthly_savings / monthly_income * 100) if monthly_income > 0 else 0
+        target_savings = monthly_income * 0.2
+        gap = target_savings - monthly_savings
+        category_tip = get_category_tip(top_category[0])
+        
+        status_msg = "Excellent! You're saving well!" if savings_rate >= 20 else "Let's improve your savings!"
+        
+        return f"""**Savings Optimization Plan:**
+
+**Current Status:**
+- Monthly Savings: Rs.{monthly_savings:,.0f} ({savings_rate:.1f}% of income)
+- Target: Rs.{target_savings:,.0f} (20% of income)
+- Gap: Rs.{gap:,.0f}
+
+{status_msg}
+
+**Top 3 Ways to Save Rs.{gap:,.0f}/month:**
+
+1. Reduce {top_category[0]} (Rs.{top_category[1]:,.0f})
+   - Current: Rs.{top_category[1]:,.0f}
+   - Cut 20%: Save Rs.{top_category[1] * 0.2:,.0f}
+   - {category_tip}
+
+2. Review Subscriptions
+   - Cancel unused services
+   - Potential savings: Rs.1,000-2,000
+
+3. Smart Shopping
+   - Use discount codes
+   - Buy generic brands
+   - Potential savings: Rs.1,500-3,000
+
+**Challenge:** Try saving Rs.{gap:,.0f} extra this month!"""
+    
+    # PRIORITY 3: Investment questions (check AFTER spending)
+    elif any(word in question_lower for word in ["invest", "investment", "sip", "mutual fund", "stocks", "portfolio"]):
+        emergency_fund = monthly_spent * 6
+        monthly_sip = max(3000, monthly_savings * 0.5)
+        
+        return f"""**Investment Strategy for You:**
+
+**Current Financial Position:**
+- Monthly Savings: Rs.{monthly_savings:,.0f}
+- Available for Investment: Rs.{monthly_sip:,.0f}/month
+
+**Step-by-Step Investment Plan:**
+
+**Step 1: Emergency Fund (Priority 1)**
+- Goal: Rs.{emergency_fund:,.0f} (6 months expenses)
+- Keep in: Savings account or liquid mutual fund
+- Timeline: Build over 6-12 months
+
+**Step 2: Start Monthly SIP (Rs.{monthly_sip:,.0f})**
+
+**Beginner-Friendly Options:**
+1. Index Funds (Recommended for beginners)
+   - Nifty 50 Index Fund
+   - Sensex Index Fund
+   - Low cost, diversified
+
+2. Large Cap Mutual Funds
+   - Safer, stable returns
+   - Good for long-term
+
+3. Balanced Funds
+   - 60% equity + 40% debt
+   - Moderate risk
+
+**Asset Allocation:**
+- 60% Equity (growth)
+- 30% Debt (stability)
+- 10% Gold/International (diversification)
+
+**Action Plan:**
+1. Open account with Zerodha/Groww
+2. Complete KYC
+3. Start with Rs.5,000/month
+4. Increase by 10% yearly
+5. Review quarterly
+
+**Pro Tip:** Don't try to time the market. Start now, even small amounts matter!
+
+**Expected Returns:** 12-15% annually (long-term)"""
+    
+    # PRIORITY 4: Budget questions
+    elif any(word in question_lower for word in ["budget", "plan", "allocate"]):
+        current_pct = (monthly_spent/monthly_income*100) if monthly_income > 0 else 0
+        savings_pct = (monthly_savings/monthly_income*100) if monthly_income > 0 else 0
+        balance_msg = "Great balance!" if (monthly_savings/monthly_income) >= 0.2 else "Try to increase savings to 20%"
+        
+        return f"""**Your Personalized Budget:**
+
+**Monthly Income:** Rs.{monthly_income:,.0f}
+
+**50/30/20 Budget Plan:**
+
+**Needs (50%)** - Rs.{monthly_income * 0.5:,.0f}
+- Rent/EMI
+- Groceries
+- Utilities
+- Transportation
+- Insurance
+
+**Wants (30%)** - Rs.{monthly_income * 0.3:,.0f}
+- Dining out
+- Entertainment
+- Shopping
+- Hobbies
+
+**Savings (20%)** - Rs.{monthly_income * 0.2:,.0f}
+- Emergency fund
+- Investments
+- Goals
+
+**Your Current Split:**
+- Needs + Wants: {current_pct:.0f}%
+- Savings: {savings_pct:.0f}%
+
+{balance_msg}"""
+    
+    # Default: General overview
+    else:
+        return f"""**Hello! I'm your Financial Advisor.**
+
+**Quick Overview:**
+- Monthly Income: Rs.{monthly_income:,.0f}
+- Monthly Spending: Rs.{monthly_spent:,.0f}
+- Monthly Savings: Rs.{monthly_savings:,.0f}
+- Top Expense: {top_category[0]} (Rs.{top_category[1]:,.0f})
+
+**I can help you with:**
+
+- "Where am I spending too much?"
+- "How can I save more money?"
+- "Should I invest more?"
+- "Create a budget for me"
+- "How to reduce expenses?"
+
+**What would you like to know?**"""
+
+
+
+def get_category_tip(category):
+    """Get specific tips for each category"""
+    tips = {
+        "Food & Drinks": "• Cook at home 4 days/week\n• Pack lunch for work\n• Limit eating out to weekends",
+        "Subscriptions": "• Cancel unused services\n• Share family plans\n• Use free alternatives",
+        "Shopping": "• Wait 24hrs before buying\n• Use price comparison\n• Buy only during sales",
+        "Groceries": "• Make weekly meal plan\n• Buy seasonal produce\n• Avoid shopping hungry",
+        "Travel": "• Use public transport\n• Carpool when possible\n• Plan trips efficiently",
+    }
+    return tips.get(category, f"• Set monthly limits\n• Track every transaction\n• Find alternatives")
+@app.post("/api/financial-advisor")
+async def financial_advisor_chat(request: dict):
+    """LangChain-Powered Financial Advisor with Memory"""
+    user_question = request.get("question", "")
+    transactions = request.get("transactions", [])
+    session_id = request.get("session_id", "default_session")
+    
+    if not user_question or not transactions:
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    logger.info(f"Question: {user_question}")
+    
+    # Generate financial summary
+    financial_summary = generate_financial_summary(transactions)
+    
+    # Get or create chat history for this session
+    if session_id not in chat_history_store:
+        chat_history_store[session_id] = []
+    
+    chat_history = chat_history_store[session_id]
+    
+    # Try LangChain LLM first
+    if llm:
+        try:
+            # Create prompt with history
+            prompt = chat_template.invoke({
+                'chat_history': chat_history[-6:],  # Last 3 exchanges
+                'financial_summary': financial_summary,
+                'query': user_question
+            })
+            
+            # Get AI response
+            ai_response = llm.invoke(prompt)
+            
+            # Get the text content from the AIMessage object
+            ai_answer = ai_response.content.strip() # <-- FIX 1
+            
+            # Update chat history
+            chat_history.append(HumanMessage(content=user_question))
+            chat_history.append(ai_response) # <-- FIX 2: Append the actual AIMessage object
+            
+            # Keep history manageable
+            if len(chat_history) > 12:
+                chat_history = chat_history[-12:]
+            
+            chat_history_store[session_id] = chat_history
+            
+            logger.info("✓ LangChain AI responded")
+            return {
+                "success": True,
+                "question": user_question,
+                "answer": ai_answer,  # Return the stripped text string to the user
+                "model": "Llama-3.1 (LangChain)",
+                "has_memory": True
+            }
+            
+        except Exception as e:
+            logger.warning(f"LangChain failed: {e}")
+    
+    # Fallback to rule-based
+    logger.info("Using rule-based fallback")
+    rule_answer = generate_rule_based_advice(user_question, transactions)
+    
+    return {
+        "success": True,
+        "question": user_question,
+        "answer": rule_answer,
+        "model": "rule-based",
+        "has_memory": False
     }
 
 
