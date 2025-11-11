@@ -54,3 +54,5 @@ __pycache__/
 
 # OS-specific files
 .DS_Store
+# clerk configuration (can include secrets)
+/.clerk/

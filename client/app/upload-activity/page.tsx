@@ -5,6 +5,8 @@ import { CheckCircle, UploadCloud, File, X } from "lucide-react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useTransactions } from "../../context/TransactionContext";
+import { useAuth } from "@clerk/nextjs";
+
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -14,12 +16,12 @@ export default function UploadPage() {
 
   const { setTransactions, setParseStats } = useTransactions();
   const router = useRouter();
-
+  const { getToken, isLoaded } = useAuth();
   const handleFileChange = (files: FileList | null) => {
     setError(null);
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type === "text/html" || file.name.endsWith('.html')) {
+      if (file.type === "text/html" || file.name.endsWith(".html")) {
         setSelectedFile(file);
       } else {
         setError("Invalid file type. Please upload an HTML file.");
@@ -65,58 +67,83 @@ export default function UploadPage() {
       setError("No file selected.");
       return;
     }
+
+    // ensure Clerk finished loading
+    if (!isLoaded) {
+      setError("Auth not ready. Try again in a moment.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
+    // Build form data
     const formData = new FormData();
     formData.append("file", selectedFile);
-    
+
     try {
+      // Get a Clerk session token (use template "session")
+      const token = await getToken();
+
+      // Debugging: show short token slice in console (never log full token in production)
+      console.log(
+        "Clerk session token (prefix):",
+        token ? token.slice(0, 40) + "..." : "no-token"
+      );
+
       const response = await axios.post(
         "http://127.0.0.1:8000/api/process-transactions",
         formData,
         {
           headers: {
-            "Content-Type": "multipart/form-data",
+            // Do not set Content-Type manually — allow browser to set multipart/form-data boundary
+            Authorization: token ? `Bearer ${token}` : undefined,
           },
           maxContentLength: Infinity,
           maxBodyLength: Infinity,
+          // If you prefer cookie-based auth, use withCredentials: true and remove Authorization header.
+          // withCredentials: true,
         }
       );
-      
-      console.log('✓ API Response:', response.data);
+
+      console.log("✓ API Response:", response.data);
       console.log(`✓ Received ${response.data.transaction_count} transactions`);
-      
-      if (response.data.transactions && Array.isArray(response.data.transactions)) {
+
+      if (
+        response.data.transactions &&
+        Array.isArray(response.data.transactions)
+      ) {
         setTransactions(response.data.transactions);
-        
         if (response.data.parsing_statistics) {
           setParseStats(response.data.parsing_statistics);
         }
-        
         router.push("/transactions");
       } else {
         setError("Invalid response format from server");
-        console.error('Invalid response:', response.data);
+        console.error("Invalid response:", response.data);
       }
-      
     } catch (err: unknown) {
       type AxiosErrorType = {
         response?: {
+          status?: number;
           data?: {
             detail?: string;
           };
         };
+        message?: string;
       };
       const errorObj = err as AxiosErrorType;
+      const status = errorObj.response?.status;
+      const detail = errorObj.response?.data?.detail;
+      const message = errorObj.message;
+
       const errorMessage =
-        (typeof err === "object" &&
-          err !== null &&
-          "response" in err &&
-          errorObj.response?.data?.detail) ||
+        detail ||
+        (status === 401 ? "Unauthorized — token missing or invalid." : null) ||
+        message ||
         "Upload failed. Is the backend server running?";
       setError(errorMessage);
-      console.error('Upload error:', err);
+      console.error("Upload error:", err);
     } finally {
       setIsLoading(false);
     }
@@ -262,9 +289,24 @@ export default function UploadPage() {
             >
               {isLoading ? (
                 <span className="flex items-center justify-center">
-                  <svg className="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  <svg
+                    className="animate-spin h-5 w-5 mr-3"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      fill="none"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
                   </svg>
                   Processing...
                 </span>

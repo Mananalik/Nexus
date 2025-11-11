@@ -1,10 +1,16 @@
 "use client";
 
-import React, { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
+import React, {
+  Dispatch,
+  SetStateAction,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
-// Update the import path if the context file is located elsewhere, for example:
 import { useTransactions } from "../../context/TransactionContext";
-// Or, if the file does not exist, create 'TransactionContext.tsx' in the 'context' folder with the appropriate exports.
+import { DateRange } from "react-day-picker";
+import { DatePickerWithRange } from "../components/DatePicker";
 
 type Transaction = {
   type: string;
@@ -68,32 +74,51 @@ export default function TransactionsPage() {
   });
   const [activeFilter, setActiveFilter] = useState("All");
 
+  const [visibleCount, setVisibleCount] = useState(10);
+
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
+
   useEffect(() => {
     if (transactions.length === 0) {
       router.push("/upload-activity");
     }
   }, [transactions, router]);
 
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [filter, sortConfig, activeFilter]);
+
   const processedData = useMemo(() => {
     const typeFiltered = transactions.filter((tx) => {
       if (activeFilter === "All") return true;
-      if (activeFilter === "Sent") return tx.type === "Paid" || tx.type === "Sent";
+      if (activeFilter === "Sent")
+        return tx.type === "Paid" || tx.type === "Sent";
       if (activeFilter === "Received") return tx.type === "Received";
       return true;
     });
 
-    const filtered = typeFiltered.filter((tx: Transaction) => {
-      const searchText = `${tx.receiver || ""} ${tx.category || ""}`.toLowerCase();
+    const filteredBySearch = typeFiltered.filter((tx: Transaction) => {
+      const searchText = `${tx.receiver || ""} ${
+        tx.category || ""
+      }`.toLowerCase();
       return searchText.includes(filter.toLowerCase());
     });
 
-    const sorted = [...filtered].sort((a, b) => {
+    const filteredByDate = filteredBySearch.filter((tx) => {
+      if (!dateRange?.from) return true;
+
+      const txDate = new Date(tx.date_original || tx.date);
+      const fromDate = new Date(dateRange.from);
+      const toDate = dateRange.to ? new Date(dateRange.to) : fromDate;
+
+      return txDate >= fromDate && txDate <= toDate;
+    });
+
+    const sorted = [...filteredByDate].sort((a, b) => {
       if (sortConfig.key === "date") {
-        const dateA = new Date(a.date);
-        const dateB = new Date(b.date);
         return sortConfig.direction === "asc"
-          ? dateA.getTime() - dateB.getTime()
-          : dateB.getTime() - dateA.getTime();
+          ? new Date(a.date).getTime() - new Date(b.date).getTime()
+          : new Date(b.date).getTime() - new Date(a.date).getTime();
       }
       if (sortConfig.key === "amount") {
         return sortConfig.direction === "asc"
@@ -101,37 +126,35 @@ export default function TransactionsPage() {
           : b.amount - a.amount;
       }
       if (sortConfig.key === "description") {
-        const descA = a.receiver || "";
-        const descB = b.receiver || "";
         return sortConfig.direction === "asc"
-          ? descA.localeCompare(descB)
-          : descB.localeCompare(descA);
+          ? (a.receiver || "").localeCompare(b.receiver || "")
+          : (b.receiver || "").localeCompare(a.receiver || "");
       }
       if (sortConfig.key === "category") {
-        const catA = a.category || "";
-        const catB = b.category || "";
         return sortConfig.direction === "asc"
-          ? catA.localeCompare(catB)
-          : catB.localeCompare(catA);
+          ? (a.category || "").localeCompare(b.category || "")
+          : (b.category || "").localeCompare(a.category || "");
       }
       return 0;
     });
 
-    const totalSent = transactions
+    const totalSent = filteredByDate
       .filter((tx) => tx.type === "Paid" || tx.type === "Sent")
       .reduce((sum, tx) => sum + tx.amount, 0);
 
-    const totalReceived = transactions
+    const totalReceived = filteredByDate
       .filter((tx) => tx.type === "Received")
       .reduce((sum, tx) => sum + tx.amount, 0);
 
-    const netFlow = totalReceived - totalSent;
-
     return {
       filteredAndSorted: sorted,
-      summary: { totalSent, totalReceived, netFlow },
+      summary: {
+        totalSent,
+        totalReceived,
+        netFlow: totalReceived - totalSent,
+      },
     };
-  }, [transactions, filter, sortConfig, activeFilter]);
+  }, [transactions, filter, sortConfig, activeFilter, dateRange]);
 
   if (transactions.length === 0) {
     return (
@@ -156,6 +179,14 @@ export default function TransactionsPage() {
     }
   };
 
+  // --- ADD THIS VARIABLE ---
+  // Get the slice of transactions to render
+  const visibleTransactions = processedData.filteredAndSorted.slice(
+    0,
+    visibleCount
+  );
+  // --- END ---
+
   return (
     <div className="bg-[#222831] text-[#EEEEEE] min-h-screen font-sans">
       <main className="container mx-auto px-4 py-8 sm:py-16">
@@ -164,7 +195,11 @@ export default function TransactionsPage() {
             Transaction Analysis
           </h1>
           <p className="text-gray-400">
-            Showing {processedData.filteredAndSorted.length} of {transactions.length} transactions
+            {/* --- MODIFY THIS LINE --- */}
+            Showing {visibleTransactions.length} of{" "}
+            {processedData.filteredAndSorted.length} matching transactions (
+            {transactions.length} total)
+            {/* --- END --- */}
           </p>
           {parseStats && (
             <p className="text-sm text-gray-500 mt-1">
@@ -226,7 +261,12 @@ export default function TransactionsPage() {
                 : "bg-[#393E46] hover:bg-[#4a505a]"
             }`}
           >
-            Sent ({transactions.filter(t => t.type === "Paid" || t.type === "Sent").length})
+            Sent (
+            {
+              transactions.filter((t) => t.type === "Paid" || t.type === "Sent")
+                .length
+            }
+            )
           </button>
           <button
             onClick={() => setActiveFilter("Received")}
@@ -236,17 +276,24 @@ export default function TransactionsPage() {
                 : "bg-[#393E46] hover:bg-[#4a505a]"
             }`}
           >
-            Received ({transactions.filter(t => t.type === "Received").length})
+            Received ({transactions.filter((t) => t.type === "Received").length}
+            )
           </button>
         </div>
 
-        <div className="mb-6">
+        <div className="mb-6 flex items-center justify-between gap-2.5">
           <input
             type="text"
             placeholder="🔍 Search by description or category..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-full p-3 bg-[#393E46] rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#00ADB5] text-white placeholder-gray-400"
+            className="flex-1 p-3 bg-[#393E46] rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#00ADB5] text-white placeholder-gray-400"
+          />
+
+          <DatePickerWithRange
+            date={dateRange}
+            onDateChange={setDateRange}
+            className="shrink-0"
           />
         </div>
 
@@ -282,7 +329,9 @@ export default function TransactionsPage() {
               </tr>
             </thead>
             <tbody>
-              {processedData.filteredAndSorted.map((tx, index) => (
+              {/* --- MODIFY THIS LINE --- */}
+              {visibleTransactions.map((tx, index) => (
+                // --- END ---
                 <tr
                   key={index}
                   className="border-b border-gray-700 last:border-b-0 hover:bg-[#4a505a] transition-colors"
@@ -317,7 +366,31 @@ export default function TransactionsPage() {
           </div>
         )}
 
+        {/* --- MODIFIED THIS SECTION --- */}
+        {/* Pagination Buttons */}
         <div className="text-center mt-8 flex justify-center space-x-4">
+          {/* "Show Less" Button */}
+          {visibleCount > 10 && (
+            <button
+              onClick={() => setVisibleCount(10)}
+              className="bg-gray-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-gray-600 transition-colors"
+            >
+              Show Less
+            </button>
+          )}
+          {/* "Show More" Button */}
+          {processedData.filteredAndSorted.length > visibleCount && (
+            <button
+              onClick={() => setVisibleCount((prevCount) => prevCount + 20)}
+              className="bg-[#00ADB5] text-white font-bold py-2 px-6 rounded-lg hover:bg-[#008a90] transition-colors"
+            >
+              Show 20 More
+            </button>
+          )}
+        </div>
+        {/* --- END MODIFICATION --- */}
+
+        <div className="text-center mt-12 flex justify-center space-x-4">
           <button
             onClick={() => router.push("/upload-activity")}
             className="bg-gray-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-gray-600 transition-colors"
