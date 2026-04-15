@@ -6,6 +6,9 @@ import { useTransactions } from "../../context/TransactionContext";
 import { Send, Loader2, ArrowLeft, Bot, User, Sparkles } from "lucide-react";
 import axios from "axios";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -68,7 +71,7 @@ export default function FinancialAdvisorPage() {
     try {
       // Call backend API
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/financial-advisor",
+        `${API_BASE_URL}/api/financial-advisor`,
         {
           question: question,
           transactions: transactions,

@@ -7,6 +7,9 @@ import { useRouter } from "next/navigation";
 import { useTransactions } from "../../context/TransactionContext";
 import { useAuth } from "@clerk/nextjs";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -92,7 +95,7 @@ export default function UploadPage() {
       );
 
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/process-transactions",
+        `${API_BASE_URL}/api/process-transactions`,
         formData,
         {
           headers: {

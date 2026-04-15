@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 
 # Use relative imports to get dependencies from other package files
@@ -10,9 +11,20 @@ from .config import logger             # Import the configured logger
 
 app = FastAPI(title="Transaction Processing API", version="1.0.0")
 
+default_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+]
+
+frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
+frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
+allow_origins = frontend_origins or default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allows your frontend to connect
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
