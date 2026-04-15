@@ -345,22 +345,39 @@ export default function DashboardPage() {
               </h3>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
-                    <Pie
+                  <Pie
                     data={spendingByCategory}
-                    cx="50%"
+                    cx="38%"
                     cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) =>
-                      `${name ?? "Other"} ${Math.round(((Number(percent) || 0) * 100))}%`
-                    }
-                    outerRadius={100}
+                    labelLine
+                    label={({ name, percent }) => {
+                      const pct = Math.round((Number(percent) || 0) * 100);
+                      return pct >= 5 ? `${name ?? "Other"} ${pct}%` : "";
+                    }}
+                    outerRadius={92}
+                    innerRadius={52}
+                    minAngle={2}
+                    paddingAngle={2}
                     fill="#8884d8"
                     dataKey="value"
-                    >
+                  >
                     {spendingByCategory.map((_, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
-                    </Pie>
+                  </Pie>
+                  <Legend
+                    layout="vertical"
+                    align="right"
+                    verticalAlign="middle"
+                    iconType="circle"
+                    formatter={(value, _entry, index) => {
+                      const item = spendingByCategory[index];
+                      const total = spendingByCategory.reduce((sum, c) => sum + c.value, 0);
+                      const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+                      return `${value} ${pct}%`;
+                    }}
+                    wrapperStyle={{ color: "#EEEEEE", fontSize: "13px" }}
+                  />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "#393E46",

@@ -18,26 +18,26 @@ from app.services.advisor import (
     generate_rule_based_advice
 )
 from app.services.clerk_auth import get_current_user
-from app.db import get_db
-from app.services.users import get_or_create_user_from_clerk
+# NOTE: removed `from app.db import get_db` and `get_or_create_user_from_clerk` imports
+# because we are removing DB connectivity.
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/protected")
 async def protected_route(current_user=Depends(get_current_user)):
+    # No DB access; just return the authenticated user info (whatever clerk returns)
     return {"ok": True, "user": current_user}
 
 
 @router.post("/process-transactions")
 async def process_transactions(
     file: UploadFile = File(...),
-    db = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
     """Process uploaded HTML transaction file and return categorized transactions"""
-    # upsert user
-    user = await get_or_create_user_from_clerk(db, current_user)
+    # No DB upsert — just use the authenticated user info directly
+    user = current_user
 
     logger.info(f"Received file: {file.filename}, content_type: {file.content_type}")
     if file.content_type != 'text/html':
@@ -119,15 +119,14 @@ async def health_check():
 @router.post("/financial-advisor")
 async def financial_advisor_chat(
     request: dict,
-    db = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    # upsert user
-    user = await get_or_create_user_from_clerk(db, current_user)
+    # No DB upsert — just use the authenticated user info directly
+    user = current_user
 
     user_question = request.get("question", "")
     transactions = request.get("transactions", [])
-    session_id = request.get("session_id", user.clerk_user_id or "default_session")
+    session_id = request.get("session_id", getattr(user, "clerk_user_id", "default_session"))
 
     if not user_question or not transactions:
         raise HTTPException(status_code=400, detail="Missing required fields")

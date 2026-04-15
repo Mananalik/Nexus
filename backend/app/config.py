@@ -1,9 +1,9 @@
 import os
 import re
 import logging
+from pathlib import Path
 from huggingface_hub import get_token
 from dotenv import load_dotenv
-from huggingface_hub import get_token
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -13,7 +13,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# Load .env from repo root (two levels up from app/)
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # --- Hugging Face Configuration ---
 # These models are confirmed to work with free tier Inference API
@@ -39,6 +41,13 @@ if not HF_TOKEN:
     )
 else:
     logger.info(f"✓ Hugging Face token loaded. Using model: {HF_MODEL_ID}")
+
+# Log Clerk key status
+clerk_key = os.getenv("CLERK_SECRET_KEY")
+if clerk_key:
+    logger.info("✓ CLERK_SECRET_KEY loaded")
+else:
+    logger.error("❌ CLERK_SECRET_KEY not found in environment!")
 
 
 # --- Categories & Rule-Based Engine ---
